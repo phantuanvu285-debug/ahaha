@@ -1,6 +1,6 @@
 
 --==================================================
--- COSMIC AUTO PICK + INSTANT TELE BASE
+-- ROYAL AUTO PICK + INSTANT TELE BASE
 -- FIX NIL PLAYER / RESPAWN / NIGHT END
 --==================================================
 
@@ -67,13 +67,16 @@ end
 
 -- XÓA MENU CŨ
 pcall(function()
-    local Old = CoreGui:FindFirstChild("CosmicAutoFarm")
+    local Old = CoreGui:FindFirstChild("RoyalAutoFarm")
     if Old then Old:Destroy() end
+
+    local OldCosmic = CoreGui:FindFirstChild("CosmicAutoFarm")
+    if OldCosmic then OldCosmic:Destroy() end
 end)
 
 -- MENU
 local Gui = Instance.new("ScreenGui")
-Gui.Name = "CosmicAutoFarm"
+Gui.Name = "RoyalAutoFarm"
 Gui.ResetOnSpawn = false
 Gui.Parent = CoreGui
 
@@ -88,7 +91,7 @@ Frame.Parent = Gui
 local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, 0, 0, 35)
 Title.BackgroundTransparency = 1
-Title.Text = "COSMIC AUTO FARM"
+Title.Text = "ROYAL AUTO FARM"
 Title.TextColor3 = Color3.new(1, 1, 1)
 Title.TextSize = 16
 Title.Parent = Frame
@@ -114,7 +117,7 @@ end)
 
 UpdateButton()
 
--- TÌM ZONE
+-- TÌM ZONE ROYAL
 local function GetZone()
     local EggSystem = Workspace:FindFirstChild("EggSystem")
     if not EggSystem then return nil end
@@ -261,7 +264,7 @@ end
 
 -- AUTO FARM LOOP
 task.spawn(function()
-    print("[COSMIC AUTO FARM] STARTED")
+    print("[ROYAL AUTO FARM] STARTED")
 
     while not stopped do
         task.wait(ScanDelay)
