@@ -1,0 +1,334 @@
+
+--==================================================
+-- COSMIC AUTO PICK + INSTANT TELE BASE
+-- FIX NIL PLAYER / RESPAWN / NIGHT END
+--==================================================
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local CoreGui = game:GetService("CoreGui")
+
+local BASE_POSITION = Vector3.new(
+    -3298.78564453125,
+    3.358024835586548,
+    -2530.9248046875
+)
+
+local Enabled = true
+local ScanDelay = 0.25
+local EggCooldown = 3
+
+local processed = {}
+local busy = false
+local stopped = false
+
+if type(fireproximityprompt) ~= "function" then
+    warn("[ERROR] Executor không hỗ trợ fireproximityprompt")
+    return
+end
+
+-- LUÔN LẤY PLAYER HIỆN TẠI
+local function GetPlayer()
+    return Players.LocalPlayer
+end
+
+local function GetCharacter()
+    local Player = GetPlayer()
+    if not Player then return nil end
+
+    return Player.Character
+end
+
+local function GetRoot()
+    local Character = GetCharacter()
+    if not Character then return nil end
+
+    return Character:FindFirstChild("HumanoidRootPart")
+end
+
+local function WaitRoot()
+    for i = 1, 50 do
+        local Player = GetPlayer()
+
+        if Player then
+            local Character = Player.Character
+
+            if Character then
+                local Root = Character:FindFirstChild("HumanoidRootPart")
+                if Root then return Root end
+            end
+        end
+
+        task.wait(0.1)
+    end
+
+    return nil
+end
+
+-- XÓA MENU CŨ
+pcall(function()
+    local Old = CoreGui:FindFirstChild("CosmicAutoFarm")
+    if Old then Old:Destroy() end
+end)
+
+-- MENU
+local Gui = Instance.new("ScreenGui")
+Gui.Name = "CosmicAutoFarm"
+Gui.ResetOnSpawn = false
+Gui.Parent = CoreGui
+
+local Frame = Instance.new("Frame")
+Frame.Size = UDim2.fromOffset(220, 115)
+Frame.Position = UDim2.new(0, 20, 0.4, 0)
+Frame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+Frame.Active = true
+Frame.Draggable = true
+Frame.Parent = Gui
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 35)
+Title.BackgroundTransparency = 1
+Title.Text = "COSMIC AUTO FARM"
+Title.TextColor3 = Color3.new(1, 1, 1)
+Title.TextSize = 16
+Title.Parent = Frame
+
+local Toggle = Instance.new("TextButton")
+Toggle.Size = UDim2.new(1, -20, 0, 35)
+Toggle.Position = UDim2.fromOffset(10, 45)
+Toggle.TextColor3 = Color3.new(1, 1, 1)
+Toggle.TextSize = 14
+Toggle.Parent = Frame
+
+local function UpdateButton()
+    Toggle.Text = Enabled and "AUTO FARM: ON" or "AUTO FARM: OFF"
+    Toggle.BackgroundColor3 = Enabled
+        and Color3.fromRGB(30, 150, 70)
+        or Color3.fromRGB(150, 40, 40)
+end
+
+Toggle.MouseButton1Click:Connect(function()
+    Enabled = not Enabled
+    UpdateButton()
+end)
+
+UpdateButton()
+
+-- TÌM ZONE
+local function GetZone()
+    local EggSystem = Workspace:FindFirstChild("EggSystem")
+    if not EggSystem then return nil end
+
+    local Nests = EggSystem:FindFirstChild("Nests")
+    if not Nests then return nil end
+
+    return Nests:FindFirstChild("Cosmic")
+end
+
+-- TELE BASE
+local function TeleBase()
+    for Attempt = 1, 3 do
+        local Root = WaitRoot()
+
+        if Root and Root.Parent then
+            local Success, Error = pcall(function()
+                Root.CFrame = CFrame.new(BASE_POSITION)
+            end)
+
+            if Success then
+                print("[TELE BASE] SUCCESS - TRY", Attempt)
+                return true
+            else
+                warn("[TELE BASE ERROR]", Error)
+            end
+        end
+
+        task.wait(0.2)
+    end
+
+    warn("[TELE BASE] FAILED - CHARACTER NOT READY")
+    return false
+end
+
+-- QUÉT TRỨNG
+local function GetEggs()
+    local Zone = GetZone()
+    if not Zone then return {} end
+
+    local Results = {}
+
+    for _, Object in ipairs(Zone:GetDescendants()) do
+        if Object:IsA("ProximityPrompt")
+            and Object.ActionText == "Steal"
+            and Object.Enabled then
+
+            local LastTime = processed[Object] or 0
+
+            if os.clock() - LastTime >= EggCooldown then
+                local Model = Object:FindFirstAncestorOfClass("Model")
+
+                if Model then
+                    table.insert(Results, {
+                        Prompt = Object,
+                        Model = Model
+                    })
+                end
+            end
+        end
+    end
+
+    return Results
+end
+
+-- TRỨNG GẦN NHẤT
+local function GetNearest(Eggs)
+    local Root = GetRoot()
+    if not Root then return nil end
+
+    local Best = nil
+    local BestDistance = math.huge
+
+    for _, Egg in ipairs(Eggs) do
+        local Model = Egg.Model
+
+        local Part = Model.PrimaryPart
+            or Model:FindFirstChildWhichIsA("BasePart", true)
+
+        if Part and Egg.Prompt.Parent then
+            local Distance = (Root.Position - Part.Position).Magnitude
+
+            if Distance < BestDistance then
+                BestDistance = Distance
+                Best = Egg
+            end
+        end
+    end
+
+    return Best
+end
+
+-- NHẶT TRỨNG
+local function PickEgg(Egg)
+    local Prompt = Egg.Prompt
+    local Model = Egg.Model
+
+    if not Prompt.Parent or not Prompt.Enabled then
+        return
+    end
+
+    local Root = WaitRoot()
+
+    local Part = Model.PrimaryPart
+        or Model:FindFirstChildWhichIsA("BasePart", true)
+
+    if not Root or not Part then return end
+
+    processed[Prompt] = os.clock()
+
+    print("[TARGET]", Model.Name)
+
+    local MoveSuccess, MoveError = pcall(function()
+        Root.CFrame = Part.CFrame * CFrame.new(0, 0, 3)
+    end)
+
+    if not MoveSuccess then
+        warn("[MOVE ERROR]", MoveError)
+        return
+    end
+
+    task.wait(0.15)
+
+    if Prompt.Parent and Prompt.Enabled then
+        local Success, Error = pcall(function()
+            fireproximityprompt(Prompt)
+        end)
+
+        if Success then
+            print("[PICK ATTEMPT]", Model.Name)
+        else
+            warn("[PICK ERROR]", Error)
+        end
+    end
+
+    TeleBase()
+
+    if not Prompt.Parent or not Prompt.Enabled then
+        print("[EGG REMOVED]", Model.Name)
+    else
+        print("[WAITING RETRY]", Model.Name)
+    end
+end
+
+-- AUTO FARM LOOP
+task.spawn(function()
+    print("[COSMIC AUTO FARM] STARTED")
+
+    while not stopped do
+        task.wait(ScanDelay)
+
+        if not Enabled or busy then
+            continue
+        end
+
+        busy = true
+
+        local Success, Error = pcall(function()
+            if not GetPlayer() then
+                return
+            end
+
+            local Eggs = GetEggs()
+            local Target = GetNearest(Eggs)
+
+            if Target then
+                PickEgg(Target)
+            end
+        end)
+
+        if not Success then
+            warn("[AUTO FARM ERROR]", Error)
+        end
+
+        busy = false
+    end
+end)
+
+-- THEO DÕI RESPAWN
+task.spawn(function()
+    while not stopped do
+        local Player = GetPlayer()
+
+        if Player then
+            local Success, Error = pcall(function()
+                Player.CharacterAdded:Wait()
+            end)
+
+            if Success then
+                print("[CHARACTER] RESPAWN DETECTED")
+                task.wait(0.8)
+
+                if Enabled then
+                    TeleBase()
+                end
+            elseif Error then
+                warn("[RESPAWN ERROR]", Error)
+                task.wait(1)
+            end
+        else
+            task.wait(1)
+        end
+    end
+end)
+
+-- DỌN PROMPT CŨ
+task.spawn(function()
+    while not stopped do
+        task.wait(5)
+
+        for Prompt in pairs(processed) do
+            if not Prompt.Parent then
+                processed[Prompt] = nil
+            end
+        end
+    end
+end)
