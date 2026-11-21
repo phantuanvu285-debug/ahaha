@@ -122,7 +122,7 @@ local function GetZone()
     local Nests = EggSystem:FindFirstChild("Nests")
     if not Nests then return nil end
 
-    return Nests:FindFirstChild("RoyalKingdom")
+    return Nests:FindFirstChild("Royal-Kingdom")
 end
 
 -- TELE BASE
