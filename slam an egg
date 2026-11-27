@@ -1,0 +1,1769 @@
+
+--========================================================
+-- ALEXANDRIA FARM - BUILD 1.1 FULL
+-- BUILD 1.0 FEATURES PRESERVED
+-- NEW: PRIORITY TITANIC - ZONE11 ONLY
+-- PRIORITY: CHICKEN > SHARD > TITANIC > EQUIP BEST > NORMAL BREAK
+-- CONFIG VERSION 10
+--========================================================
+
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local VIM = game:GetService("VirtualInputManager")
+local HttpService = game:GetService("HttpService")
+
+local Player = Players.LocalPlayer
+local PlayerGui = Player:WaitForChild("PlayerGui")
+
+local Running = true
+local AutoBreak = false
+local AutoCollect = false
+local AutoEquipBest = false
+local AutoCollectShard = false
+local PriorityTitanic = false
+
+local AutoCollectByMoney = false
+local MoneyThresholdText = "100B"
+local MoneyThresholdValue = 100000000000
+
+local CollectBusy = false
+local BreakBusy = false
+local ShardBusy = false
+local CollectRequested = false
+
+local AutoLoadConfig = true
+
+local EquipBestPending = false
+local EquipBestBusy = false
+local LastCollectedAt = 0
+local EquipBestQuietTime = 0.8
+
+local SelectedZones = {}
+local SelectedRarities = {}
+local CollectRarities = {}
+
+local CurrentZoneIndex = 1
+local LastStageTime = {}
+
+local ConfigFile = "AlexandriaFarm_Config.json"
+
+local HomeCFrame =
+    CFrame.new(-1.750159, 2.998025, 18.489046)
+    * CFrame.Angles(0, -1.762364, 0)
+
+--========================================================
+-- MONEY
+--========================================================
+
+local MoneyUnits = {
+    K = 1e3,
+    M = 1e6,
+    B = 1e9,
+    T = 1e12,
+    QA = 1e15,
+    QI = 1e18
+}
+
+local function parseMoney(value)
+    if type(value) == "number" then return value end
+    if type(value) ~= "string" then return nil end
+
+    local txt = value:upper():gsub("%s+",""):gsub(",","")
+    local numberPart,unitPart = txt:match("^([%d%.]+)([%a]*)$")
+
+    if not numberPart then return nil end
+
+    local number = tonumber(numberPart)
+    if not number or number < 0 then return nil end
+
+    local multiplier = unitPart == "" and 1 or MoneyUnits[unitPart]
+    if not multiplier then return nil end
+
+    return number * multiplier
+end
+
+local function updateMoneyThreshold()
+    local parsed = parseMoney(MoneyThresholdText)
+    if parsed then
+        MoneyThresholdValue = parsed
+        return true
+    end
+    return false
+end
+
+--========================================================
+-- OPTIONS
+--========================================================
+
+local RarityOptions = {
+    "Common","Uncommon","Rare","Epic","Legendary",
+    "Mythic","Secret","Divine","Cosmic","Celestial","Ethereal"
+}
+
+local ZoneOptions = {}
+for i = 1,11 do
+    ZoneOptions[i] = "Zone"..i
+end
+
+local ZoneStage = {
+    Zone7 = Vector3.new(-45.630207,4.1,1106.933594),
+    Zone8 = Vector3.new(20.400692,4.3,1618.393799),
+    Zone9 = Vector3.new(30.528992,4.1,1790.292725),
+    Zone10 = Vector3.new(3.659802,4.1,2102.365479),
+    Zone11 = Vector3.new(43.019756,4.1,2651.491211)
+}
+
+--========================================================
+-- CONFIG
+--========================================================
+
+local function copySelected(source)
+    local result = {}
+    for key,value in pairs(source) do
+        if value == true then result[key] = true end
+    end
+    return result
+end
+
+local function applySelected(target,source,options)
+    for key in pairs(target) do target[key] = nil end
+    if type(source) ~= "table" then return end
+
+    for _,name in ipairs(options) do
+        if source[name] == true then target[name] = true end
+    end
+end
+
+local function getConfig()
+    return {
+        Version = 10,
+        AutoBreak = AutoBreak,
+        AutoCollect = AutoCollect,
+        AutoEquipBest = AutoEquipBest,
+        AutoCollectShard = AutoCollectShard,
+        PriorityTitanic = PriorityTitanic,
+        AutoLoadConfig = AutoLoadConfig,
+        AutoCollectByMoney = AutoCollectByMoney,
+        MoneyThresholdText = MoneyThresholdText,
+        SelectedZones = copySelected(SelectedZones),
+        SelectedRarities = copySelected(SelectedRarities),
+        CollectRarities = copySelected(CollectRarities)
+    }
+end
+
+local function saveConfig()
+    if type(writefile) ~= "function" then
+        warn("[Alexandria] Executor không hỗ trợ writefile")
+        return false
+    end
+
+    local success,err = pcall(function()
+        writefile(ConfigFile,HttpService:JSONEncode(getConfig()))
+    end)
+
+    if success then
+        print("[Alexandria] Config saved:",ConfigFile)
+        return true
+    end
+
+    warn("[Alexandria] Save failed:",err)
+    return false
+end
+
+local function loadConfig()
+    if type(isfile) ~= "function"
+        or type(readfile) ~= "function" then
+        warn("[Alexandria] Executor không hỗ trợ đọc file")
+        return false
+    end
+
+    if not isfile(ConfigFile) then return false end
+
+    local success,data = pcall(function()
+        return HttpService:JSONDecode(readfile(ConfigFile))
+    end)
+
+    if not success or type(data) ~= "table" then
+        warn("[Alexandria] Config không hợp lệ")
+        return false
+    end
+
+    AutoBreak = data.AutoBreak == true
+    AutoCollect = data.AutoCollect == true
+    AutoEquipBest = data.AutoEquipBest == true
+    AutoCollectShard = data.AutoCollectShard == true
+    PriorityTitanic = data.PriorityTitanic == true
+    AutoCollectByMoney = data.AutoCollectByMoney == true
+
+    if type(data.MoneyThresholdText) == "string" then
+        MoneyThresholdText = data.MoneyThresholdText
+    end
+
+    if data.AutoLoadConfig ~= nil then
+        AutoLoadConfig = data.AutoLoadConfig == true
+    end
+
+    updateMoneyThreshold()
+
+    applySelected(SelectedZones,data.SelectedZones,ZoneOptions)
+    applySelected(SelectedRarities,data.SelectedRarities,RarityOptions)
+    applySelected(CollectRarities,data.CollectRarities,RarityOptions)
+
+    print("[Alexandria] Config loaded")
+    return true
+end
+
+if AutoLoadConfig then loadConfig() end
+
+--========================================================
+-- GUI
+--========================================================
+
+local old = PlayerGui:FindFirstChild("AlexandriaFarm")
+if old then old:Destroy() end
+
+local Gui = Instance.new("ScreenGui")
+Gui.Name = "AlexandriaFarm"
+Gui.ResetOnSpawn = false
+Gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+Gui.Parent = PlayerGui
+
+local Main = Instance.new("Frame")
+Main.Size = UDim2.fromOffset(810,525)
+Main.Position = UDim2.new(0.5,-405,0.5,-262)
+Main.BackgroundColor3 = Color3.fromRGB(15,15,17)
+Main.BorderSizePixel = 0
+Main.Parent = Gui
+
+local function corner(o,r)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0,r or 6)
+    c.Parent = o
+end
+
+local function stroke(o,color,thickness)
+    local s = Instance.new("UIStroke")
+    s.Color = color or Color3.fromRGB(43,43,47)
+    s.Thickness = thickness or 1
+    s.Parent = o
+    return s
+end
+
+local function label(parent,txt,size,pos,font,color)
+    local l = Instance.new("TextLabel")
+    l.BackgroundTransparency = 1
+    l.Text = txt
+    l.Size = size
+    l.Position = pos
+    l.Font = Enum.Font.Gotham
+    l.TextSize = font or 12
+    l.TextColor3 = color or Color3.fromRGB(225,225,230)
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.Parent = parent
+    return l
+end
+
+local function button(parent,txt,size,pos)
+    local b = Instance.new("TextButton")
+    b.Size = size
+    b.Position = pos
+    b.BackgroundColor3 = Color3.fromRGB(27,27,30)
+    b.BorderSizePixel = 0
+    b.Text = txt
+    b.TextColor3 = Color3.fromRGB(225,225,230)
+    b.Font = Enum.Font.Gotham
+    b.TextSize = 12
+    b.Parent = parent
+    corner(b,5)
+    return b
+end
+
+corner(Main,8)
+stroke(Main,Color3.fromRGB(48,48,53))
+
+-- SIDEBAR
+
+local Sidebar = Instance.new("Frame")
+Sidebar.Size = UDim2.new(0,200,1,0)
+Sidebar.BackgroundColor3 = Color3.fromRGB(17,17,19)
+Sidebar.BorderSizePixel = 0
+Sidebar.Parent = Main
+corner(Sidebar,8)
+
+local sideLine = Instance.new("Frame")
+sideLine.Size = UDim2.new(0,1,1,0)
+sideLine.Position = UDim2.new(1,-1,0,0)
+sideLine.BackgroundColor3 = Color3.fromRGB(40,40,44)
+sideLine.BorderSizePixel = 0
+sideLine.Parent = Sidebar
+
+label(Sidebar,"Λ  Alexandria",UDim2.new(1,-25,0,35),UDim2.fromOffset(18,8),14)
+
+local Search = Instance.new("TextBox")
+Search.Size = UDim2.new(1,-25,0,32)
+Search.Position = UDim2.fromOffset(12,58)
+Search.BackgroundColor3 = Color3.fromRGB(24,24,27)
+Search.BorderSizePixel = 0
+Search.PlaceholderText = "⌕  Search"
+Search.Text = ""
+Search.TextColor3 = Color3.new(1,1,1)
+Search.PlaceholderColor3 = Color3.fromRGB(125,125,130)
+Search.Font = Enum.Font.Gotham
+Search.TextSize = 12
+Search.Parent = Sidebar
+corner(Search,6)
+
+local menu = {
+    {"⌂","Home"},{"⚒","Farm"},{"◯","Pen"},
+    {"⌁","Progression"},{"◎","Visuals"},{"⚙","Settings"}
+}
+
+local MenuButtons = {}
+
+for i,v in ipairs(menu) do
+    local b = button(
+        Sidebar,v[1].."   "..v[2],
+        UDim2.new(1,-22,0,30),
+        UDim2.fromOffset(11,105+(i-1)*34)
+    )
+    b.TextXAlignment = Enum.TextXAlignment.Left
+    b.BackgroundTransparency = 1
+    b.TextColor3 = Color3.fromRGB(145,145,150)
+    MenuButtons[v[2]] = b
+end
+
+label(Sidebar,"◯  Discord",UDim2.new(1,-20,0,25),UDim2.fromOffset(24,425),12,Color3.fromRGB(150,150,155))
+label(Sidebar,"👤   noend285",UDim2.new(1,-20,0,22),UDim2.fromOffset(22,475),12)
+label(Sidebar,"       Break To Steal A...",UDim2.new(1,-20,0,18),UDim2.fromOffset(22,493),10,Color3.fromRGB(130,130,135))
+
+-- PAGES
+
+local Content = Instance.new("Frame")
+Content.Position = UDim2.fromOffset(201,0)
+Content.Size = UDim2.new(1,-201,1,0)
+Content.BackgroundTransparency = 1
+Content.Parent = Main
+
+local FarmPage = Instance.new("Frame")
+FarmPage.Name = "FarmPage"
+FarmPage.Size = UDim2.new(1,0,1,0)
+FarmPage.BackgroundTransparency = 1
+FarmPage.Parent = Content
+
+local SettingsPage = Instance.new("Frame")
+SettingsPage.Name = "SettingsPage"
+SettingsPage.Size = UDim2.new(1,0,1,0)
+SettingsPage.BackgroundTransparency = 1
+SettingsPage.Visible = false
+SettingsPage.Parent = Content
+
+local Top = button(Content,"▢     Farm                         ﹀",UDim2.fromOffset(210,36),UDim2.fromOffset(13,15))
+Top.TextXAlignment = Enum.TextXAlignment.Left
+
+local PageLabel = label(Content,"Farm",UDim2.fromOffset(200,22),UDim2.fromOffset(14,57),12)
+
+local function showPage(pageName)
+    local isFarm = pageName == "Farm"
+    FarmPage.Visible = isFarm
+    SettingsPage.Visible = not isFarm
+    Top.Text = isFarm and "▢     Farm                         ﹀" or "⚙     Settings                    ﹀"
+    PageLabel.Text = pageName
+
+    for name,b in pairs(MenuButtons) do
+        if name == "Farm" or name == "Settings" then
+            local selected = name == pageName
+            b.BackgroundTransparency = selected and 0 or 1
+            b.BackgroundColor3 = Color3.fromRGB(29,29,33)
+            b.TextColor3 = selected and Color3.new(1,1,1) or Color3.fromRGB(145,145,150)
+        end
+    end
+end
+
+MenuButtons.Farm.MouseButton1Click:Connect(function() showPage("Farm") end)
+MenuButtons.Settings.MouseButton1Click:Connect(function() showPage("Settings") end)
+showPage("Farm")
+
+local function panel(parent,title,pos,size)
+    local p = Instance.new("Frame")
+    p.Position = pos
+    p.Size = size
+    p.BackgroundColor3 = Color3.fromRGB(17,17,19)
+    p.BorderSizePixel = 0
+    p.ClipsDescendants = false
+    p.Parent = parent
+    corner(p,8)
+    stroke(p)
+
+    local h = button(p,title.."                         ⌃",UDim2.new(1,0,0,31),UDim2.fromOffset(0,0))
+    h.BackgroundColor3 = Color3.fromRGB(18,18,20)
+    h.TextXAlignment = Enum.TextXAlignment.Left
+
+    local line = Instance.new("Frame")
+    line.Size = UDim2.new(1,0,0,1)
+    line.Position = UDim2.fromOffset(0,31)
+    line.BackgroundColor3 = Color3.fromRGB(40,40,44)
+    line.BorderSizePixel = 0
+    line.Parent = p
+
+    return p,h
+end
+
+-- STATUS
+
+local StatusPanel,StatusHeader = panel(
+    FarmPage,"⌁  Status",
+    UDim2.fromOffset(13,88),UDim2.fromOffset(283,32)
+)
+
+local StatusValue = label(
+    StatusPanel,"Status: Stopped",
+    UDim2.new(1,-20,0,25),UDim2.fromOffset(12,36),11,
+    Color3.fromRGB(170,170,175)
+)
+StatusValue.Visible = false
+
+local StatusOpen = false
+StatusHeader.MouseButton1Click:Connect(function()
+    StatusOpen = not StatusOpen
+    StatusPanel.Size = UDim2.fromOffset(283,StatusOpen and 68 or 32)
+    StatusValue.Visible = StatusOpen
+end)
+
+local function setStatus(s)
+    if StatusValue and StatusValue.Parent then
+        StatusValue.Text = "Status: "..s
+    end
+end
+
+-- TOGGLE
+
+local function makeToggle(parent,txt,y)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1,-20,0,25)
+    b.Position = UDim2.fromOffset(10,y)
+    b.BackgroundTransparency = 1
+    b.Text = ""
+    b.BorderSizePixel = 0
+    b.AutoButtonColor = false
+    b.Parent = parent
+
+    local square = Instance.new("Frame")
+    square.Size = UDim2.fromOffset(15,15)
+    square.Position = UDim2.fromOffset(0,5)
+    square.BackgroundColor3 = Color3.fromRGB(17,17,19)
+    square.BorderSizePixel = 0
+    square.Parent = b
+    corner(square,3)
+
+    local edge = stroke(square,Color3.fromRGB(150,150,155),1)
+    label(b,txt,UDim2.new(1,-24,1,0),UDim2.fromOffset(24,0),12)
+
+    local function set(value)
+        if value then
+            square.BackgroundColor3 = Color3.fromRGB(245,245,245)
+            edge.Color = Color3.fromRGB(95,95,100)
+        else
+            square.BackgroundColor3 = Color3.fromRGB(17,17,19)
+            edge.Color = Color3.fromRGB(150,150,155)
+        end
+    end
+
+    set(false)
+    return b,set
+end
+
+-- MULTI SELECT
+
+local function multi(parent,title,y,options,selected)
+    label(parent,title.." (none = any)",UDim2.new(1,-20,0,18),UDim2.fromOffset(12,y),11)
+
+    local display = button(parent,"---                         ﹀",UDim2.new(1,-20,0,25),UDim2.fromOffset(10,y+19))
+    display.TextXAlignment = Enum.TextXAlignment.Left
+    display.TextTruncate = Enum.TextTruncate.AtEnd
+
+    local holder = Instance.new("Frame")
+    holder.Position = UDim2.fromOffset(10,y+47)
+    holder.Size = UDim2.new(1,-20,0,0)
+    holder.BackgroundColor3 = Color3.fromRGB(24,24,27)
+    holder.BorderSizePixel = 0
+    holder.Visible = false
+    holder.ClipsDescendants = true
+    holder.ZIndex = 20
+    holder.Parent = parent
+    corner(holder,5)
+    stroke(holder)
+
+    local scroll = Instance.new("ScrollingFrame")
+    scroll.Name = "OptionsScroll"
+    scroll.Size = UDim2.new(1,0,1,0)
+    scroll.BackgroundTransparency = 1
+    scroll.BorderSizePixel = 0
+    scroll.Active = true
+    scroll.ScrollingEnabled = true
+    scroll.ScrollingDirection = Enum.ScrollingDirection.Y
+    scroll.ElasticBehavior = Enum.ElasticBehavior.WhenScrollable
+    scroll.ScrollBarThickness = 5
+    scroll.ScrollBarImageColor3 = Color3.fromRGB(145,145,155)
+    scroll.CanvasSize = UDim2.new(0,0,#options*29,0)
+    scroll.ZIndex = 21
+    scroll.Parent = holder
+
+    local layout = Instance.new("UIListLayout")
+    layout.Padding = UDim.new(0,2)
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Parent = scroll
+
+    local function refresh()
+        local names = {}
+        for _,name in ipairs(options) do
+            if selected[name] then table.insert(names,name) end
+        end
+
+        display.Text = (#names == 0 and "---" or table.concat(names,", ")).."                         ﹀"
+
+        for _,child in ipairs(scroll:GetChildren()) do
+            if child:IsA("TextButton") then
+                local name = child:GetAttribute("OptionName")
+                if name then child.Text = (selected[name] and "■  " or "□  ")..name end
+            end
+        end
+    end
+
+    for i,name in ipairs(options) do
+        local opt = Instance.new("TextButton")
+        opt.Name = "Option_"..name
+        opt.Size = UDim2.new(1,-8,0,27)
+        opt.BackgroundColor3 = Color3.fromRGB(29,29,33)
+        opt.BorderSizePixel = 0
+        opt.Text = (selected[name] and "■  " or "□  ")..name
+        opt.TextColor3 = Color3.fromRGB(225,225,230)
+        opt.Font = Enum.Font.Gotham
+        opt.TextSize = 11
+        opt.TextXAlignment = Enum.TextXAlignment.Left
+        opt.LayoutOrder = i
+        opt.ZIndex = 22
+        opt:SetAttribute("OptionName",name)
+        opt.Parent = scroll
+        corner(opt,4)
+
+        opt.MouseButton1Click:Connect(function()
+            selected[name] = not selected[name]
+            refresh()
+        end)
+    end
+
+    local opened = false
+    display.MouseButton1Click:Connect(function()
+        opened = not opened
+        holder.Visible = opened
+        holder.Size = opened and UDim2.new(1,-20,0,math.min(#options*29,200)) or UDim2.new(1,-20,0,0)
+        if opened then scroll.CanvasPosition = Vector2.zero end
+    end)
+
+    refresh()
+    return refresh
+end
+
+-- FARM PANELS
+
+local BreakPanel = panel(FarmPage,"⚒  Auto Break",UDim2.fromOffset(13,128),UDim2.fromOffset(283,175))
+local BreakButton,SetBreakVisual = makeToggle(BreakPanel,"Auto Break",39)
+
+local refreshZones = multi(BreakPanel,"Zones",70,ZoneOptions,SelectedZones)
+local refreshBreakRarities = multi(BreakPanel,"Rarities",119,RarityOptions,SelectedRarities)
+
+local CollectPanel = panel(FarmPage,"♧  Collect Chickens",UDim2.fromOffset(307,88),UDim2.fromOffset(283,220))
+local CollectButton,SetCollectVisual = makeToggle(CollectPanel,"Auto Collect Chickens",39)
+local MoneyFilterButton,SetMoneyFilterVisual = makeToggle(CollectPanel,"Auto Collect By Money",67)
+
+label(CollectPanel,"Minimum Income (/s)",UDim2.new(1,-20,0,17),UDim2.fromOffset(12,94),10,Color3.fromRGB(175,175,180))
+
+local MoneyInput = Instance.new("TextBox")
+MoneyInput.Name = "MoneyThreshold"
+MoneyInput.Size = UDim2.new(1,-20,0,27)
+MoneyInput.Position = UDim2.fromOffset(10,112)
+MoneyInput.BackgroundColor3 = Color3.fromRGB(27,27,30)
+MoneyInput.BorderSizePixel = 0
+MoneyInput.Text = MoneyThresholdText
+MoneyInput.PlaceholderText = "Example: 100B / 2Qa / 1Qi"
+MoneyInput.TextColor3 = Color3.fromRGB(245,245,245)
+MoneyInput.PlaceholderColor3 = Color3.fromRGB(120,120,125)
+MoneyInput.Font = Enum.Font.Gotham
+MoneyInput.TextSize = 11
+MoneyInput.ClearTextOnFocus = false
+MoneyInput.Parent = CollectPanel
+corner(MoneyInput,5)
+stroke(MoneyInput,Color3.fromRGB(55,55,60))
+
+local MoneyHint = label(CollectPanel,"K / M / B / T / Qa / Qi",UDim2.new(1,-20,0,15),UDim2.fromOffset(12,141),9,Color3.fromRGB(130,130,140))
+local refreshCollectRarities = multi(CollectPanel,"Rarities",158,RarityOptions,CollectRarities)
+
+-- EVENT PANEL
+
+local EventPanel = panel(FarmPage,"✧  Event Collection",UDim2.fromOffset(307,318),UDim2.fromOffset(283,105))
+local ShardButton,SetShardVisual = makeToggle(EventPanel,"Auto Collect Shard",39)
+local TitanicButton,SetTitanicVisual = makeToggle(EventPanel,"Priority Titanic - Zone11",66)
+
+-- SETTINGS
+
+local ConfigPanel = panel(SettingsPage,"⚙  Config",UDim2.fromOffset(13,88),UDim2.fromOffset(283,175))
+
+local SaveButton = button(ConfigPanel,"Save Config",UDim2.fromOffset(120,30),UDim2.fromOffset(12,42))
+local LoadButton = button(ConfigPanel,"Load Config",UDim2.fromOffset(120,30),UDim2.fromOffset(148,42))
+local AutoLoadButton = button(ConfigPanel,"Auto Load: ON",UDim2.new(1,-24,0,25),UDim2.fromOffset(12,80))
+local EquipBestButton,SetEquipBestVisual = makeToggle(ConfigPanel,"Auto Equip Best",111)
+
+local ConfigInfo = label(ConfigPanel,"File: AlexandriaFarm_Config.json",UDim2.new(1,-24,0,18),UDim2.fromOffset(12,145),9,Color3.fromRGB(135,135,140))
+
+local function updateAutoLoadButton()
+    AutoLoadButton.Text = "Auto Load: "..(AutoLoadConfig and "ON" or "OFF")
+end
+updateAutoLoadButton()
+
+-- MONEY EVENTS
+
+local function updateMoneyHint()
+    if updateMoneyThreshold() then
+        MoneyHint.Text = "Minimum: "..MoneyThresholdText.."/s"
+        MoneyHint.TextColor3 = Color3.fromRGB(130,190,145)
+    else
+        MoneyHint.Text = "Invalid value - example: 100B"
+        MoneyHint.TextColor3 = Color3.fromRGB(230,110,110)
+    end
+end
+
+MoneyInput.FocusLost:Connect(function()
+    MoneyThresholdText = MoneyInput.Text
+    if updateMoneyThreshold() then
+        MoneyInput.Text = MoneyThresholdText
+        updateMoneyHint()
+        saveConfig()
+        setStatus("Money Filter: "..MoneyThresholdText)
+    else
+        updateMoneyHint()
+        setStatus("Invalid Money Threshold")
+    end
+end)
+
+MoneyFilterButton.MouseButton1Click:Connect(function()
+    AutoCollectByMoney = not AutoCollectByMoney
+    SetMoneyFilterVisual(AutoCollectByMoney)
+    setStatus(AutoCollectByMoney and "Money Filter ON: "..MoneyThresholdText or "Money Filter OFF")
+    saveConfig()
+end)
+
+updateMoneyHint()
+
+-- DRAG
+
+local dragging = false
+local dragStart
+local startPos
+
+Top.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = Main.Position
+    end
+end)
+
+UIS.InputChanged:Connect(function(input)
+    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local d = input.Position-dragStart
+        Main.Position = UDim2.new(startPos.X.Scale,startPos.X.Offset+d.X,startPos.Y.Scale,startPos.Y.Offset+d.Y)
+    end
+end)
+
+UIS.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+end)
+
+-- CHARACTER
+
+local function getCharacter()
+    return Player.Character
+end
+
+local function getHRP()
+    local c = getCharacter()
+    return c and c:FindFirstChild("HumanoidRootPart")
+end
+
+local function clearVelocity(root)
+    if not root then return end
+    pcall(function()
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+        root.Velocity = Vector3.zero
+        root.RotVelocity = Vector3.zero
+    end)
+end
+
+local function safeTeleport(destination)
+    if not destination then return false end
+
+    local character = getCharacter()
+    local root = getHRP()
+    if not character or not root then return false end
+
+    local wasAnchored = root.Anchored
+    clearVelocity(root)
+
+    local success = pcall(function()
+        character:PivotTo(destination)
+    end)
+
+    task.wait(0.15)
+    character = getCharacter()
+    root = getHRP()
+
+    if root and root.Parent then
+        root.Anchored = wasAnchored
+        clearVelocity(root)
+    end
+
+    if not success or not root then return false end
+    return (root.Position-destination.Position).Magnitude <= 30
+end
+
+local function requestArea(position)
+    if not position then return end
+    pcall(function() Player:RequestStreamAroundAsync(position,3) end)
+end
+
+-- FILTER
+
+local function isSelected(filter,value)
+    local has = false
+    for _,v in pairs(filter) do
+        if v then has = true break end
+    end
+    return not has or filter[value] == true
+end
+
+-- CHICKEN DETECTION
+
+local function getHatchedFolder()
+    local root = workspace:FindFirstChild("EggHatchLive")
+    return root and root:FindFirstChild("Hatched")
+end
+
+local function passesMoneyFilter(pet)
+    if not AutoCollectByMoney then return true end
+    if not updateMoneyThreshold() then return false end
+
+    local income = tonumber(pet:GetAttribute("Income"))
+    return income ~= nil and income >= MoneyThresholdValue
+end
+
+local function findChicken()
+    if not AutoCollect then return nil end
+
+    local hatched = getHatchedFolder()
+    local hrp = getHRP()
+    if not hatched or not hrp then return nil end
+
+    local bestTarget
+    local bestDistance = math.huge
+
+    for _,pet in ipairs(hatched:GetChildren()) do
+        if pet:IsA("Model") and pet.Name == "HatchedPet" then
+            local rarity = pet:GetAttribute("Rarity")
+            local petName = pet:GetAttribute("PetName")
+            local income = tonumber(pet:GetAttribute("Income"))
+
+            local petRoot = pet:FindFirstChild("HumanoidRootPart")
+            local prompt = petRoot and petRoot:FindFirstChild("StealPrompt")
+
+            if rarity and isSelected(CollectRarities,rarity)
+                and passesMoneyFilter(pet)
+                and petRoot and prompt
+                and prompt:IsA("ProximityPrompt") and prompt.Enabled then
+
+                local distance = (hrp.Position-petRoot.Position).Magnitude
+                if distance < bestDistance then
+                    bestDistance = distance
+                    bestTarget = {
+                        Pet = pet,
+                        PetName = petName or pet.Name,
+                        Rarity = rarity,
+                        Income = income or 0,
+                        Part = petRoot,
+                        Prompt = prompt
+                    }
+                end
+            end
+        end
+    end
+
+    return bestTarget
+end
+
+local function hasCollectTarget()
+    if not AutoCollect then
+        CollectRequested = false
+        return false
+    end
+
+    if findChicken() then
+        CollectRequested = true
+        return true
+    end
+    return false
+end
+
+-- SHARD
+
+local function getShardFolder()
+    return workspace:FindFirstChild("ShardDrops")
+end
+
+local function getShardCount()
+    return tonumber(Player:GetAttribute("Shards")) or 0
+end
+
+local function findShard()
+    if not AutoCollectShard then return nil end
+
+    local folder = getShardFolder()
+    local hrp = getHRP()
+    if not folder or not hrp then return nil end
+
+    local nearest
+    local nearestDistance = math.huge
+
+    for _,obj in ipairs(folder:GetChildren()) do
+        if obj:IsA("BasePart") and obj.Name == "Shard" then
+            local distance = (hrp.Position-obj.Position).Magnitude
+            if distance < nearestDistance then
+                nearestDistance = distance
+                nearest = obj
+            end
+        end
+    end
+
+    return nearest
+end
+
+local function hasShardTarget()
+    return AutoCollectShard and findShard() ~= nil
+end
+
+-- EQUIP BEST
+
+local function clickEquipBest()
+    local petsPanel = PlayerGui:FindFirstChild("MainUI")
+    petsPanel = petsPanel and petsPanel:FindFirstChild("PetsPanel")
+    local btn = petsPanel and petsPanel:FindFirstChild("EquipBestButton")
+
+    if not btn or not btn:IsA("TextButton") or not btn.Visible or not btn.Active then
+        warn("[Alexandria] EquipBestButton chưa sẵn sàng")
+        return false
+    end
+
+    if type(firesignal) ~= "function" then
+        warn("[Alexandria] Executor không hỗ trợ firesignal")
+        return false
+    end
+
+    local success = pcall(function() firesignal(btn.Activated) end)
+    if not success then
+        success = pcall(function() firesignal(btn.MouseButton1Click) end)
+    end
+
+    if success then
+        print("[Alexandria] Equip Best clicked")
+        return true
+    end
+    return false
+end
+
+local function processEquipBest()
+    if not AutoEquipBest or not EquipBestPending or EquipBestBusy
+        or CollectBusy or ShardBusy then return false end
+
+    if AutoCollect and findChicken() then return false end
+    if AutoCollectShard and findShard() then return false end
+    if PriorityTitanic and AutoBreak and findTitanicEgg then
+        -- Titanic is handled before Equip Best in the main loop.
+    end
+    if os.clock()-LastCollectedAt < EquipBestQuietTime then return false end
+
+    EquipBestBusy = true
+    setStatus("Equipping Best Pets")
+
+    local success = clickEquipBest()
+    if success then
+        EquipBestPending = false
+        setStatus("Equip Best Completed")
+    else
+        setStatus("Equip Best Retry")
+    end
+
+    EquipBestBusy = false
+    return success
+end
+
+-- COLLECT CHICKEN
+
+local function collectChicken()
+    if CollectBusy or not AutoCollect then return false end
+
+    local target = findChicken()
+    if not target then
+        CollectRequested = false
+        return false
+    end
+
+    CollectBusy = true
+    CollectRequested = true
+
+    local incomeText = ""
+    if target.Income and target.Income > 0 then
+        incomeText = " ["..string.format("%.3g",target.Income).."/s]"
+    end
+
+    setStatus("Collecting "..tostring(target.PetName).." ["..tostring(target.Rarity).."]"..incomeText)
+
+    local collected = false
+
+    for attempt = 1,3 do
+        if not Running or not AutoCollect then break end
+        if not target.Pet or not target.Pet.Parent then
+            collected = true
+            break
+        end
+        if not target.Part or not target.Part.Parent then
+            collected = true
+            break
+        end
+
+        local prompt = target.Part:FindFirstChild("StealPrompt")
+        if not prompt or not prompt.Enabled then
+            collected = true
+            break
+        end
+
+        safeTeleport(target.Part.CFrame*CFrame.new(0,0,2))
+        task.wait(0.15)
+
+        if prompt.Parent and prompt.Enabled then
+            pcall(function() fireproximityprompt(prompt) end)
+        end
+
+        local start = os.clock()
+        repeat
+            task.wait(0.1)
+            if not target.Pet.Parent or not prompt.Parent or not prompt.Enabled then
+                collected = true
+                break
+            end
+        until os.clock()-start >= 1.2
+
+        if collected then break end
+    end
+
+    if collected then
+        setStatus("Pet Collected")
+        safeTeleport(HomeCFrame)
+        if AutoEquipBest then
+            EquipBestPending = true
+            LastCollectedAt = os.clock()
+        end
+    else
+        setStatus("Retrying Pet Collect")
+    end
+
+    CollectBusy = false
+    task.wait(0.1)
+    CollectRequested = findChicken() ~= nil
+    return collected
+end
+
+-- COLLECT SHARD
+
+local function collectShard()
+    if not AutoCollectShard or ShardBusy or CollectBusy or hasCollectTarget() then
+        return false
+    end
+
+    local shard = findShard()
+    if not shard or not shard.Parent then return false end
+
+    ShardBusy = true
+    local beforeCount = getShardCount()
+    local previousCFrame
+    local root = getHRP()
+    if root then previousCFrame = root.CFrame end
+
+    setStatus("Going To Shard")
+    local increased = false
+
+    requestArea(shard.Position)
+
+    if shard.Parent then
+        local targetPosition = shard.Position+Vector3.new(0,2,0)
+        if safeTeleport(CFrame.new(targetPosition)) then
+            setStatus("Collecting Shard")
+            local start = os.clock()
+
+            repeat
+                task.wait(0.1)
+                local currentCount = getShardCount()
+                if currentCount >= beforeCount+1 then
+                    increased = true
+                    break
+                end
+                if not shard.Parent then break end
+            until os.clock()-start >= 3 or not Running or not AutoCollectShard
+        end
+    end
+
+    local afterCount = getShardCount()
+    if afterCount >= beforeCount+1 then increased = true end
+
+    if increased then
+        setStatus("Shard Collected +"..tostring(afterCount-beforeCount))
+        print("[Alexandria] Shard collected:",beforeCount,"->",afterCount)
+    else
+        setStatus("Shard Not Confirmed")
+    end
+
+    if previousCFrame and Running then
+        task.wait(0.1)
+        safeTeleport(previousCFrame)
+    end
+
+    ShardBusy = false
+    return increased
+end
+
+-- ZONE HELPERS
+
+local function getZoneFolder(zoneName)
+    local root = workspace:FindFirstChild("ZoneEggs")
+    return root and root:FindFirstChild(zoneName)
+end
+
+local function getZoneEggFolder(zoneName)
+    local zone = getZoneFolder(zoneName)
+    return zone and zone:FindFirstChild("Eggs")
+end
+
+local function getStagePosition(zoneName)
+    if ZoneStage[zoneName] then return ZoneStage[zoneName] end
+
+    local zone = getZoneFolder(zoneName)
+    local slots = zone and zone:FindFirstChild("Slots")
+    local hrp = getHRP()
+
+    if slots then
+        local nearest
+        local nearestDistance = math.huge
+
+        for _,slot in ipairs(slots:GetChildren()) do
+            if slot:IsA("BasePart") then
+                local distance = hrp and (hrp.Position-slot.Position).Magnitude or 0
+                if distance < nearestDistance then
+                    nearestDistance = distance
+                    nearest = slot
+                end
+            end
+        end
+
+        if nearest then return nearest.Position+Vector3.new(0,4,0) end
+    end
+
+    return nil
+end
+
+local function stageZone(zoneName)
+    if not AutoBreak or hasCollectTarget() or hasShardTarget() then
+        return false
+    end
+
+    local eggs = getZoneEggFolder(zoneName)
+    if eggs and #eggs:GetChildren() > 0 then return true end
+
+    local now = os.clock()
+    if LastStageTime[zoneName] and now-LastStageTime[zoneName] < 1.5 then
+        return false
+    end
+    LastStageTime[zoneName] = now
+
+    local position = getStagePosition(zoneName)
+    if not position then
+        setStatus("Finding Slot "..zoneName)
+        return false
+    end
+
+    setStatus("Teleporting to "..zoneName)
+    if hasCollectTarget() or hasShardTarget() then return false end
+
+    if not safeTeleport(CFrame.new(position)) then
+        setStatus("Teleport failed "..zoneName)
+        return false
+    end
+
+    requestArea(position)
+    local start = os.clock()
+
+    repeat
+        task.wait(0.15)
+
+        if hasCollectTarget() then
+            setStatus("Pet Detected - Collect Priority")
+            return false
+        end
+        if hasShardTarget() then
+            setStatus("Shard Detected - Collect Priority")
+            return false
+        end
+
+        eggs = getZoneEggFolder(zoneName)
+        if eggs and #eggs:GetChildren() > 0 then
+            setStatus(zoneName.." Loaded")
+            return true
+        end
+    until os.clock()-start >= 8 or not Running or not AutoBreak
+
+    return false
+end
+
+-- EGG POSITION
+
+local function getEggPos(egg)
+    local ok,cf = pcall(function() return egg:GetPivot() end)
+    if ok and cf then return cf.Position end
+    local part = egg:FindFirstChildWhichIsA("BasePart",true)
+    return part and part.Position
+end
+
+-- NORMAL EGG
+
+local function findEgg(zoneName)
+    if not zoneName then return nil end
+    local eggsFolder = getZoneEggFolder(zoneName)
+    if not eggsFolder then return nil end
+
+    local best
+    local bestDistance = math.huge
+    local hrp = getHRP()
+
+    for _,egg in ipairs(eggsFolder:GetChildren()) do
+        if egg:IsA("Model") then
+            local hp = tonumber(egg:GetAttribute("HP")) or 0
+            local rarity = egg:GetAttribute("Rarity") or egg:GetAttribute("Tier")
+            local pos = getEggPos(egg)
+
+            if hp > 0 and pos and isSelected(SelectedRarities,rarity) then
+                local distance = hrp and (hrp.Position-pos).Magnitude or 0
+                if distance < bestDistance then
+                    best = egg
+                    bestDistance = distance
+                end
+            end
+        end
+    end
+
+    return best
+end
+
+--========================================================
+-- TITANIC DETECTION - ZONE11 ONLY
+-- Detect by model name or string attributes containing "Titanic"
+--========================================================
+
+local function textContainsTitanic(value)
+    if type(value) ~= "string" then return false end
+    return value:lower():find("titanic",1,true) ~= nil
+end
+
+local function hasTitanicMarker(instance)
+    if textContainsTitanic(instance.Name) then return true end
+
+    for attributeName,value in pairs(instance:GetAttributes()) do
+        if textContainsTitanic(attributeName) or textContainsTitanic(value) then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function isTitanicEgg(egg)
+    if not egg or not egg:IsA("Model") then return false end
+
+    if hasTitanicMarker(egg) then return true end
+
+    for _,descendant in ipairs(egg:GetDescendants()) do
+        if hasTitanicMarker(descendant) then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function findTitanicEgg()
+    if not PriorityTitanic then return nil end
+
+    -- CHỈ QUÉT ZONE11
+    local eggsFolder = getZoneEggFolder("Zone11")
+    if not eggsFolder then return nil end
+
+    local best
+    local bestDistance = math.huge
+    local hrp = getHRP()
+
+    for _,egg in ipairs(eggsFolder:GetChildren()) do
+        if egg:IsA("Model") and isTitanicEgg(egg) then
+            local hp = tonumber(egg:GetAttribute("HP")) or 0
+            local pos = getEggPos(egg)
+
+            if hp > 0 and pos then
+                local distance = hrp and (hrp.Position-pos).Magnitude or 0
+                if distance < bestDistance then
+                    best = egg
+                    bestDistance = distance
+                end
+            end
+        end
+    end
+
+    return best
+end
+
+-- ZONE ROTATION
+
+local function getSelectedZoneList()
+    local result = {}
+    for _,zoneName in ipairs(ZoneOptions) do
+        if SelectedZones[zoneName] then
+            table.insert(result,zoneName)
+        end
+    end
+    return result
+end
+
+local function getCurrentZone()
+    local list = getSelectedZoneList()
+    if #list == 0 then return nil end
+    if CurrentZoneIndex > #list then CurrentZoneIndex = 1 end
+    return list[CurrentZoneIndex]
+end
+
+local function advanceZone()
+    local list = getSelectedZoneList()
+    if #list == 0 then
+        CurrentZoneIndex = 1
+        return
+    end
+
+    CurrentZoneIndex += 1
+    if CurrentZoneIndex > #list then CurrentZoneIndex = 1 end
+end
+
+-- GAUNTLETS
+
+local function isGauntletsEquipped()
+    local c = getCharacter()
+    return c and c:FindFirstChild("Gauntlets") ~= nil
+end
+
+local function equipGauntlets()
+    if isGauntletsEquipped() then return true end
+
+    local backpack = Player:FindFirstChildOfClass("Backpack")
+    if not backpack or not backpack:FindFirstChild("Gauntlets") then
+        return false
+    end
+
+    pcall(function()
+        VIM:SendKeyEvent(true,Enum.KeyCode.One,false,game)
+        task.wait(0.05)
+        VIM:SendKeyEvent(false,Enum.KeyCode.One,false,game)
+    end)
+
+    local start = os.clock()
+    repeat
+        if isGauntletsEquipped() then return true end
+        task.wait(0.05)
+    until os.clock()-start > 2
+
+    return isGauntletsEquipped()
+end
+
+local function enableAutoSmash()
+    if Player:GetAttribute("AutoSmash") == true then return true end
+
+    local ui = PlayerGui:FindFirstChild("AutoSmashUI")
+    local holder = ui and ui:FindFirstChild("Holder")
+    local btn = holder and holder:FindFirstChild("AutoSmashButton")
+    if not btn then return false end
+
+    local off = btn:FindFirstChild("Off")
+    if off and off.Visible then
+        pcall(function() firesignal(btn.Activated) end)
+    end
+
+    local start = os.clock()
+    repeat
+        if Player:GetAttribute("AutoSmash") == true then return true end
+        task.wait(0.05)
+    until os.clock()-start > 2
+
+    return Player:GetAttribute("AutoSmash") == true
+end
+
+-- SAFE EGG POSITION
+
+local function getSafeEggCFrame(egg)
+    if not egg or not egg.Parent then return nil end
+
+    local pos = egg:GetPivot().Position
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+
+    local exclude = {egg}
+    local character = getCharacter()
+    if character then table.insert(exclude,character) end
+    params.FilterDescendantsInstances = exclude
+
+    local result = workspace:Raycast(
+        pos+Vector3.new(0,35,0),
+        Vector3.new(0,-120,0),
+        params
+    )
+
+    local targetY = result and result.Position.Y+4.5 or pos.Y+6
+    local targetPosition = Vector3.new(pos.X,targetY,pos.Z)
+    local root = getHRP()
+    local rotation = root and root.CFrame.Rotation or CFrame.identity
+
+    return CFrame.new(targetPosition)*rotation
+end
+
+-- BREAK EGG
+-- Titanic vẫn dùng Auto Break, nhưng bỏ qua bộ lọc Rarity.
+
+local function breakEgg(egg,isTitanic)
+    if BreakBusy or not egg or not egg.Parent then return end
+    if hasCollectTarget() or hasShardTarget() then return end
+
+    if not AutoBreak then return end
+
+    BreakBusy = true
+    setStatus(isTitanic and "PRIORITY TITANIC - "..egg.Name or "Breaking "..egg.Name)
+
+    local targetCFrame = getSafeEggCFrame(egg)
+    if targetCFrame and not hasCollectTarget() and not hasShardTarget() then
+        safeTeleport(targetCFrame)
+    end
+
+    task.wait(0.15)
+    local lastCheck = 0
+
+    while Running
+        and AutoBreak
+        and egg.Parent
+        and (tonumber(egg:GetAttribute("HP")) or 0) > 0 do
+
+        if hasCollectTarget() then
+            setStatus("Pet Detected - Pausing Break")
+            break
+        end
+
+        if hasShardTarget() then
+            setStatus("Shard Detected - Pausing Break")
+            break
+        end
+
+        -- Titanic biến mất/không còn là Titanic thì thoát
+        if isTitanic and not isTitanicEgg(egg) then
+            setStatus("Titanic Target Lost")
+            break
+        end
+
+        if not isGauntletsEquipped() then equipGauntlets() end
+        if hasCollectTarget() or hasShardTarget() then break end
+
+        if Player:GetAttribute("AutoSmash") ~= true then
+            enableAutoSmash()
+        end
+
+        if os.clock()-lastCheck > 0.5 then
+            lastCheck = os.clock()
+
+            local root = getHRP()
+            local eggPos = getEggPos(egg)
+
+            if root and eggPos then
+                local distance = (root.Position-eggPos).Magnitude
+                if distance > 22 and not hasCollectTarget() and not hasShardTarget() then
+                    local newCFrame = getSafeEggCFrame(egg)
+                    if newCFrame then safeTeleport(newCFrame) end
+                end
+            end
+        end
+
+        task.wait(0.08)
+    end
+
+    BreakBusy = false
+
+    if isTitanic then
+        if not egg.Parent or (tonumber(egg:GetAttribute("HP")) or 0) <= 0 then
+            setStatus("Titanic Destroyed - Resume Farm")
+            print("[Alexandria] Titanic Zone11 destroyed")
+        end
+    end
+
+    if CollectRequested then
+        setStatus("Collect Priority")
+    elseif hasShardTarget() then
+        setStatus("Shard Collect Priority")
+    end
+end
+
+--========================================================
+-- GUI EVENTS
+--========================================================
+
+BreakButton.MouseButton1Click:Connect(function()
+    AutoBreak = not AutoBreak
+    SetBreakVisual(AutoBreak)
+    CurrentZoneIndex = 1
+    setStatus(AutoBreak and "Auto Break Enabled" or "Auto Break Disabled")
+    saveConfig()
+end)
+
+CollectButton.MouseButton1Click:Connect(function()
+    AutoCollect = not AutoCollect
+    SetCollectVisual(AutoCollect)
+
+    if not AutoCollect then
+        CollectRequested = false
+    else
+        hasCollectTarget()
+        setStatus("Searching Pets")
+    end
+
+    saveConfig()
+end)
+
+ShardButton.MouseButton1Click:Connect(function()
+    AutoCollectShard = not AutoCollectShard
+    SetShardVisual(AutoCollectShard)
+    setStatus(AutoCollectShard and "Auto Collect Shard Enabled" or "Auto Collect Shard Disabled")
+    saveConfig()
+end)
+
+TitanicButton.MouseButton1Click:Connect(function()
+    PriorityTitanic = not PriorityTitanic
+    SetTitanicVisual(PriorityTitanic)
+
+    if PriorityTitanic then
+        setStatus(AutoBreak and "Titanic Priority ON - Watching Zone11" or "Titanic ON - Enable Auto Break")
+        print("[Alexandria] Priority Titanic ON - Zone11 only")
+    else
+        setStatus("Titanic Priority OFF")
+        print("[Alexandria] Priority Titanic OFF")
+    end
+
+    saveConfig()
+end)
+
+-- CONFIG BUTTONS
+
+SaveButton.MouseButton1Click:Connect(function()
+    MoneyThresholdText = MoneyInput.Text
+    updateMoneyThreshold()
+
+    if saveConfig() then
+        ConfigInfo.Text = "Config saved successfully!"
+        setStatus("Config Saved")
+    else
+        ConfigInfo.Text = "Save failed - check executor"
+        setStatus("Config Save Failed")
+    end
+end)
+
+LoadButton.MouseButton1Click:Connect(function()
+    local success = loadConfig()
+
+    if success then
+        SetBreakVisual(AutoBreak)
+        SetCollectVisual(AutoCollect)
+        SetMoneyFilterVisual(AutoCollectByMoney)
+        SetEquipBestVisual(AutoEquipBest)
+        SetShardVisual(AutoCollectShard)
+        SetTitanicVisual(PriorityTitanic)
+
+        MoneyInput.Text = MoneyThresholdText
+        updateMoneyHint()
+
+        refreshZones()
+        refreshBreakRarities()
+        refreshCollectRarities()
+        updateAutoLoadButton()
+
+        CurrentZoneIndex = 1
+        EquipBestPending = false
+
+        ConfigInfo.Text = "Config loaded successfully!"
+        setStatus("Config Loaded")
+    else
+        ConfigInfo.Text = "Config not found or invalid"
+        setStatus("Config Load Failed")
+    end
+end)
+
+AutoLoadButton.MouseButton1Click:Connect(function()
+    AutoLoadConfig = not AutoLoadConfig
+    updateAutoLoadButton()
+    saveConfig()
+end)
+
+EquipBestButton.MouseButton1Click:Connect(function()
+    AutoEquipBest = not AutoEquipBest
+    SetEquipBestVisual(AutoEquipBest)
+
+    if not AutoEquipBest then
+        EquipBestPending = false
+        setStatus("Auto Equip Best Disabled")
+    else
+        setStatus("Auto Equip Best Enabled")
+    end
+
+    saveConfig()
+end)
+
+-- MINIMIZE / RESTORE
+
+local Minimize = button(Content,"—",UDim2.fromOffset(28,28),UDim2.new(1,-75,0,12))
+Minimize.TextSize = 18
+
+local Restore = button(Gui,"Λ",UDim2.fromOffset(44,44),UDim2.new(1,-58,0,18))
+Restore.TextSize = 20
+Restore.Visible = false
+Restore.BackgroundColor3 = Color3.fromRGB(22,22,25)
+Restore.TextColor3 = Color3.fromRGB(245,245,245)
+Restore.ZIndex = 100
+corner(Restore,8)
+stroke(Restore,Color3.fromRGB(100,100,110),1)
+
+Minimize.MouseButton1Click:Connect(function()
+    Main.Visible = false
+    Restore.Visible = true
+end)
+
+Restore.MouseButton1Click:Connect(function()
+    Main.Visible = true
+    Restore.Visible = false
+end)
+
+-- CLOSE
+
+local Close = button(Content,"×",UDim2.fromOffset(28,28),UDim2.new(1,-40,0,12))
+Close.TextSize = 18
+
+Close.MouseButton1Click:Connect(function()
+    saveConfig()
+    Running = false
+    AutoBreak = false
+    AutoCollect = false
+    AutoEquipBest = false
+    AutoCollectByMoney = false
+    AutoCollectShard = false
+    PriorityTitanic = false
+    EquipBestPending = false
+    Gui:Destroy()
+end)
+
+-- FOOTER
+
+label(Content,"Break To Steal A Chicken",UDim2.fromOffset(250,18),UDim2.new(0.5,-125,1,-25),11,Color3.fromRGB(145,145,150))
+label(Content,"Build: 1.1",UDim2.fromOffset(90,18),UDim2.new(1,-100,1,-25),10,Color3.fromRGB(125,125,130))
+
+-- APPLY LOADED TOGGLES
+
+SetBreakVisual(AutoBreak)
+SetCollectVisual(AutoCollect)
+SetMoneyFilterVisual(AutoCollectByMoney)
+SetEquipBestVisual(AutoEquipBest)
+SetShardVisual(AutoCollectShard)
+SetTitanicVisual(PriorityTitanic)
+
+MoneyInput.Text = MoneyThresholdText
+updateMoneyHint()
+
+--========================================================
+-- MAIN LOOP
+--========================================================
+
+task.spawn(function()
+    while Running and Gui.Parent do
+
+        -- PRIORITY 1: CHICKENS
+        if AutoCollect and not CollectBusy then
+            if findChicken() then CollectRequested = true end
+        end
+
+        if AutoCollect and CollectRequested and not CollectBusy then
+            collectChicken()
+        end
+
+        if AutoCollect and not CollectBusy then
+            if findChicken() then
+                CollectRequested = true
+                task.wait(0.05)
+                continue
+            else
+                CollectRequested = false
+            end
+        end
+
+        -- PRIORITY 2: SHARDS
+        if AutoCollectShard and not ShardBusy and not CollectBusy and not BreakBusy then
+            if findShard() then
+                collectShard()
+                task.wait(0.05)
+                continue
+            end
+        end
+
+        -- PRIORITY 3: TITANIC ZONE11
+        if PriorityTitanic and AutoBreak
+            and not CollectBusy and not ShardBusy and not BreakBusy
+            and not CollectRequested and not hasShardTarget() then
+
+            local titanic = findTitanicEgg()
+
+            if titanic then
+                setStatus("TITANIC FOUND - "..titanic.Name)
+                print("[Alexandria] TITANIC FOUND:",titanic:GetFullName())
+
+                if not isGauntletsEquipped() then
+                    setStatus("Titanic: Equipping Gauntlets")
+                    equipGauntlets()
+                end
+
+                if isGauntletsEquipped() then
+                    if Player:GetAttribute("AutoSmash") ~= true then
+                        enableAutoSmash()
+                    end
+
+                    if Player:GetAttribute("AutoSmash") == true then
+                        breakEgg(titanic,true)
+                    end
+                end
+
+                task.wait(0.05)
+                continue
+            else
+                -- Zone11 chưa load: yêu cầu stream khu vực để theo dõi spawn
+                local zone11Eggs = getZoneEggFolder("Zone11")
+
+                if not zone11Eggs or #zone11Eggs:GetChildren() == 0 then
+                    stageZone("Zone11")
+                    task.wait(0.1)
+                    continue
+                end
+            end
+        end
+
+        -- PRIORITY 4: EQUIP BEST WHEN IDLE
+        if AutoEquipBest and EquipBestPending then
+            processEquipBest()
+        end
+
+        -- PRIORITY 5: NORMAL AUTO BREAK
+        if AutoBreak and not CollectBusy and not BreakBusy
+            and not ShardBusy and not CollectRequested
+            and not hasShardTarget() then
+
+            if not isGauntletsEquipped() then
+                setStatus("Equipping Gauntlets")
+                equipGauntlets()
+            end
+
+            if hasCollectTarget() or hasShardTarget() then
+                task.wait(0.05)
+                continue
+            end
+
+            if isGauntletsEquipped() then
+                if Player:GetAttribute("AutoSmash") ~= true then
+                    enableAutoSmash()
+                end
+
+                if Player:GetAttribute("AutoSmash") == true then
+                    local zoneName = getCurrentZone()
+
+                    if zoneName then
+                        local eggsFolder = getZoneEggFolder(zoneName)
+
+                        if not eggsFolder or #eggsFolder:GetChildren() == 0 then
+                            stageZone(zoneName)
+                        end
+
+                        if hasCollectTarget() or hasShardTarget() then
+                            task.wait(0.05)
+                            continue
+                        end
+
+                        -- Kiểm tra Titanic lần nữa trước khi đánh trứng thường
+                        if PriorityTitanic then
+                            local urgent = findTitanicEgg()
+                            if urgent then
+                                breakEgg(urgent,true)
+                                task.wait(0.05)
+                                continue
+                            end
+                        end
+
+                        local egg = findEgg(zoneName)
+
+                        if egg then
+                            breakEgg(egg,false)
+                        else
+                            if not hasCollectTarget() and not hasShardTarget() then
+                                setStatus("Checking "..zoneName)
+                                advanceZone()
+                            end
+                            task.wait(0.12)
+                        end
+                    else
+                        setStatus("Select a Zone")
+                        task.wait(0.3)
+                    end
+                end
+            end
+
+        elseif AutoCollect and not CollectRequested then
+            if not EquipBestPending then setStatus("Searching Pets") end
+        end
+
+        task.wait(0.05)
+    end
+end)
+
+--========================================================
+-- START
+--========================================================
+
+print("====================================")
+print("[Alexandria Farm] BUILD 1.1 LOADED")
+print("[Alexandria Farm] Money Filter: K/M/B/T/Qa/Qi")
+print("[Alexandria Farm] Scrollable Zone & Rarity Lists: ON")
+print("[Alexandria Farm] Chicken Priority: ON")
+print("[Alexandria Farm] Auto Equip Best:",AutoEquipBest)
+print("[Alexandria Farm] Auto Collect Shard:",AutoCollectShard)
+print("[Alexandria Farm] Priority Titanic:",PriorityTitanic)
+print("[Alexandria Farm] Titanic Scan: Zone11 ONLY")
+print("[Alexandria Farm] Titanic Detection: Name / Attributes")
+print("[Alexandria Farm] Config Version: 10")
+print("[Alexandria Farm] Config File:",ConfigFile)
+print("====================================")
