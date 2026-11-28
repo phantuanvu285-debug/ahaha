@@ -1,9 +1,10 @@
 
 --========================================================
--- ALEXANDRIA FARM - BUILD 1.1 FULL
--- BUILD 1.0 FEATURES PRESERVED
--- NEW: PRIORITY TITANIC - ZONE11 ONLY
+-- ALEXANDRIA FARM - BUILD 1.2 FULL
+-- BUILD 1.1 FEATURES PRESERVED
+-- NEW: AUTO BREAK PRIORITIZES HIGHEST HP EGG
 -- PRIORITY: CHICKEN > SHARD > TITANIC > EQUIP BEST > NORMAL BREAK
+-- NORMAL EGG: HIGHEST HP FIRST, NEAREST IF HP TIED
 -- CONFIG VERSION 10
 --========================================================
 
@@ -1141,13 +1142,17 @@ local function getEggPos(egg)
 end
 
 -- NORMAL EGG
+-- NEW: PICK HIGHEST HP FIRST
+-- IF HP IS EQUAL, PICK NEAREST EGG
 
 local function findEgg(zoneName)
     if not zoneName then return nil end
+
     local eggsFolder = getZoneEggFolder(zoneName)
     if not eggsFolder then return nil end
 
     local best
+    local bestHP = -math.huge
     local bestDistance = math.huge
     local hrp = getHRP()
 
@@ -1159,8 +1164,12 @@ local function findEgg(zoneName)
 
             if hp > 0 and pos and isSelected(SelectedRarities,rarity) then
                 local distance = hrp and (hrp.Position-pos).Magnitude or 0
-                if distance < bestDistance then
+
+                if hp > bestHP
+                    or (hp == bestHP and distance < bestDistance) then
+
                     best = egg
+                    bestHP = hp
                     bestDistance = distance
                 end
             end
@@ -1355,7 +1364,12 @@ local function breakEgg(egg,isTitanic)
     if not AutoBreak then return end
 
     BreakBusy = true
-    setStatus(isTitanic and "PRIORITY TITANIC - "..egg.Name or "Breaking "..egg.Name)
+
+    local initialHP = tonumber(egg:GetAttribute("HP")) or 0
+    setStatus(
+        isTitanic and "PRIORITY TITANIC - "..egg.Name
+        or "Breaking "..egg.Name.." ["..tostring(initialHP).." HP]"
+    )
 
     local targetCFrame = getSafeEggCFrame(egg)
     if targetCFrame and not hasCollectTarget() and not hasShardTarget() then
@@ -1380,7 +1394,6 @@ local function breakEgg(egg,isTitanic)
             break
         end
 
-        -- Titanic biến mất/không còn là Titanic thì thoát
         if isTitanic and not isTitanicEgg(egg) then
             setStatus("Titanic Target Lost")
             break
@@ -1417,6 +1430,10 @@ local function breakEgg(egg,isTitanic)
         if not egg.Parent or (tonumber(egg:GetAttribute("HP")) or 0) <= 0 then
             setStatus("Titanic Destroyed - Resume Farm")
             print("[Alexandria] Titanic Zone11 destroyed")
+        end
+    else
+        if not egg.Parent or (tonumber(egg:GetAttribute("HP")) or 0) <= 0 then
+            print("[Alexandria] Egg destroyed:",egg.Name,"HP:",initialHP)
         end
     end
 
@@ -1585,7 +1602,7 @@ end)
 -- FOOTER
 
 label(Content,"Break To Steal A Chicken",UDim2.fromOffset(250,18),UDim2.new(0.5,-125,1,-25),11,Color3.fromRGB(145,145,150))
-label(Content,"Build: 1.1",UDim2.fromOffset(90,18),UDim2.new(1,-100,1,-25),10,Color3.fromRGB(125,125,130))
+label(Content,"Build: 1.2",UDim2.fromOffset(90,18),UDim2.new(1,-100,1,-25),10,Color3.fromRGB(125,125,130))
 
 -- APPLY LOADED TOGGLES
 
@@ -1663,7 +1680,6 @@ task.spawn(function()
                 task.wait(0.05)
                 continue
             else
-                -- Zone11 chưa load: yêu cầu stream khu vực để theo dõi spawn
                 local zone11Eggs = getZoneEggFolder("Zone11")
 
                 if not zone11Eggs or #zone11Eggs:GetChildren() == 0 then
@@ -1714,7 +1730,7 @@ task.spawn(function()
                             continue
                         end
 
-                        -- Kiểm tra Titanic lần nữa trước khi đánh trứng thường
+                        -- KIỂM TRA TITANIC TRƯỚC TRỨNG THƯỜNG
                         if PriorityTitanic then
                             local urgent = findTitanicEgg()
                             if urgent then
@@ -1724,9 +1740,12 @@ task.spawn(function()
                             end
                         end
 
+                        -- NORMAL EGG: HIGHEST HP FIRST
                         local egg = findEgg(zoneName)
 
                         if egg then
+                            local hp = tonumber(egg:GetAttribute("HP")) or 0
+                            setStatus("Highest HP: "..egg.Name.." ["..tostring(hp).." HP]")
                             breakEgg(egg,false)
                         else
                             if not hasCollectTarget() and not hasShardTarget() then
@@ -1755,7 +1774,9 @@ end)
 --========================================================
 
 print("====================================")
-print("[Alexandria Farm] BUILD 1.1 LOADED")
+print("[Alexandria Farm] BUILD 1.2 LOADED")
+print("[Alexandria Farm] Normal Egg Priority: HIGHEST HP")
+print("[Alexandria Farm] HP Tie Breaker: NEAREST")
 print("[Alexandria Farm] Money Filter: K/M/B/T/Qa/Qi")
 print("[Alexandria Farm] Scrollable Zone & Rarity Lists: ON")
 print("[Alexandria Farm] Chicken Priority: ON")
