@@ -1,16 +1,18 @@
 
 --========================================================
--- ALEXANDRIA FARM - BUILD 1.2 FULL
--- BUILD 1.1 FEATURES PRESERVED
--- NEW: AUTO BREAK PRIORITIZES HIGHEST HP EGG
--- PRIORITY: CHICKEN > SHARD > TITANIC > EQUIP BEST > NORMAL BREAK
+-- ALEXANDRIA FARM - BUILD 1.3 FULL
+-- BASE: BUILD 1.2
+-- FIX: MAIN LOOP AUTO RECOVERY
+-- FIX: BREAKBUSY AUTO RESET ON ERROR
+-- FIX: AUTOSMASH CHECKS REAL UI STATE
+-- FIX: USE CURRENTLY EQUIPPED TOOL
+-- PRIORITY: CHICKEN > SHARD > TITANIC > EQUIP BEST > NORMAL
 -- NORMAL EGG: HIGHEST HP FIRST, NEAREST IF HP TIED
--- CONFIG VERSION 10
+-- CONFIG VERSION 10 - COMPATIBLE WITH BUILD 1.2
 --========================================================
 
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
-local VIM = game:GetService("VirtualInputManager")
 local HttpService = game:GetService("HttpService")
 
 local Player = Players.LocalPlayer
@@ -57,12 +59,8 @@ local HomeCFrame =
 --========================================================
 
 local MoneyUnits = {
-    K = 1e3,
-    M = 1e6,
-    B = 1e9,
-    T = 1e12,
-    QA = 1e15,
-    QI = 1e18
+    K = 1e3, M = 1e6, B = 1e9,
+    T = 1e12, QA = 1e15, QI = 1e18
 }
 
 local function parseMoney(value)
@@ -71,7 +69,6 @@ local function parseMoney(value)
 
     local txt = value:upper():gsub("%s+",""):gsub(",","")
     local numberPart,unitPart = txt:match("^([%d%.]+)([%a]*)$")
-
     if not numberPart then return nil end
 
     local number = tonumber(numberPart)
@@ -79,7 +76,6 @@ local function parseMoney(value)
 
     local multiplier = unitPart == "" and 1 or MoneyUnits[unitPart]
     if not multiplier then return nil end
-
     return number * multiplier
 end
 
@@ -205,7 +201,6 @@ local function loadConfig()
     end
 
     updateMoneyThreshold()
-
     applySelected(SelectedZones,data.SelectedZones,ZoneOptions)
     applySelected(SelectedRarities,data.SelectedRarities,RarityOptions)
     applySelected(CollectRarities,data.CollectRarities,RarityOptions)
@@ -282,8 +277,6 @@ end
 corner(Main,8)
 stroke(Main,Color3.fromRGB(48,48,53))
 
--- SIDEBAR
-
 local Sidebar = Instance.new("Frame")
 Sidebar.Size = UDim2.new(0,200,1,0)
 Sidebar.BackgroundColor3 = Color3.fromRGB(17,17,19)
@@ -336,8 +329,6 @@ end
 label(Sidebar,"◯  Discord",UDim2.new(1,-20,0,25),UDim2.fromOffset(24,425),12,Color3.fromRGB(150,150,155))
 label(Sidebar,"👤   noend285",UDim2.new(1,-20,0,22),UDim2.fromOffset(22,475),12)
 label(Sidebar,"       Break To Steal A...",UDim2.new(1,-20,0,18),UDim2.fromOffset(22,493),10,Color3.fromRGB(130,130,135))
-
--- PAGES
 
 local Content = Instance.new("Frame")
 Content.Position = UDim2.fromOffset(201,0)
@@ -599,8 +590,6 @@ stroke(MoneyInput,Color3.fromRGB(55,55,60))
 local MoneyHint = label(CollectPanel,"K / M / B / T / Qa / Qi",UDim2.new(1,-20,0,15),UDim2.fromOffset(12,141),9,Color3.fromRGB(130,130,140))
 local refreshCollectRarities = multi(CollectPanel,"Rarities",158,RarityOptions,CollectRarities)
 
--- EVENT PANEL
-
 local EventPanel = panel(FarmPage,"✧  Event Collection",UDim2.fromOffset(307,318),UDim2.fromOffset(283,105))
 local ShardButton,SetShardVisual = makeToggle(EventPanel,"Auto Collect Shard",39)
 local TitanicButton,SetTitanicVisual = makeToggle(EventPanel,"Priority Titanic - Zone11",66)
@@ -680,7 +669,9 @@ UIS.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
 end)
 
--- CHARACTER
+--========================================================
+-- CHARACTER / TELEPORT
+--========================================================
 
 local function getCharacter()
     return Player.Character
@@ -743,7 +734,9 @@ local function isSelected(filter,value)
     return not has or filter[value] == true
 end
 
+--========================================================
 -- CHICKEN DETECTION
+--========================================================
 
 local function getHatchedFolder()
     local root = workspace:FindFirstChild("EggHatchLive")
@@ -814,7 +807,9 @@ local function hasCollectTarget()
     return false
 end
 
+--========================================================
 -- SHARD
+--========================================================
 
 local function getShardFolder()
     return workspace:FindFirstChild("ShardDrops")
@@ -851,7 +846,9 @@ local function hasShardTarget()
     return AutoCollectShard and findShard() ~= nil
 end
 
+--========================================================
 -- EQUIP BEST
+--========================================================
 
 local function clickEquipBest()
     local petsPanel = PlayerGui:FindFirstChild("MainUI")
@@ -886,9 +883,6 @@ local function processEquipBest()
 
     if AutoCollect and findChicken() then return false end
     if AutoCollectShard and findShard() then return false end
-    if PriorityTitanic and AutoBreak and findTitanicEgg then
-        -- Titanic is handled before Equip Best in the main loop.
-    end
     if os.clock()-LastCollectedAt < EquipBestQuietTime then return false end
 
     EquipBestBusy = true
@@ -906,7 +900,9 @@ local function processEquipBest()
     return success
 end
 
+--========================================================
 -- COLLECT CHICKEN
+--========================================================
 
 local function collectChicken()
     if CollectBusy or not AutoCollect then return false end
@@ -982,7 +978,9 @@ local function collectChicken()
     return collected
 end
 
+--========================================================
 -- COLLECT SHARD
+--========================================================
 
 local function collectShard()
     if not AutoCollectShard or ShardBusy or CollectBusy or hasCollectTarget() then
@@ -1040,7 +1038,9 @@ local function collectShard()
     return increased
 end
 
+--========================================================
 -- ZONE HELPERS
+--========================================================
 
 local function getZoneFolder(zoneName)
     local root = workspace:FindFirstChild("ZoneEggs")
@@ -1132,7 +1132,9 @@ local function stageZone(zoneName)
     return false
 end
 
--- EGG POSITION
+--========================================================
+-- EGG POSITION / NORMAL EGG
+--========================================================
 
 local function getEggPos(egg)
     local ok,cf = pcall(function() return egg:GetPivot() end)
@@ -1140,10 +1142,6 @@ local function getEggPos(egg)
     local part = egg:FindFirstChildWhichIsA("BasePart",true)
     return part and part.Position
 end
-
--- NORMAL EGG
--- NEW: PICK HIGHEST HP FIRST
--- IF HP IS EQUAL, PICK NEAREST EGG
 
 local function findEgg(zoneName)
     if not zoneName then return nil end
@@ -1165,9 +1163,7 @@ local function findEgg(zoneName)
             if hp > 0 and pos and isSelected(SelectedRarities,rarity) then
                 local distance = hrp and (hrp.Position-pos).Magnitude or 0
 
-                if hp > bestHP
-                    or (hp == bestHP and distance < bestDistance) then
-
+                if hp > bestHP or (hp == bestHP and distance < bestDistance) then
                     best = egg
                     bestHP = hp
                     bestDistance = distance
@@ -1181,7 +1177,6 @@ end
 
 --========================================================
 -- TITANIC DETECTION - ZONE11 ONLY
--- Detect by model name or string attributes containing "Titanic"
 --========================================================
 
 local function textContainsTitanic(value)
@@ -1203,7 +1198,6 @@ end
 
 local function isTitanicEgg(egg)
     if not egg or not egg:IsA("Model") then return false end
-
     if hasTitanicMarker(egg) then return true end
 
     for _,descendant in ipairs(egg:GetDescendants()) do
@@ -1218,7 +1212,6 @@ end
 local function findTitanicEgg()
     if not PriorityTitanic then return nil end
 
-    -- CHỈ QUÉT ZONE11
     local eggsFolder = getZoneEggFolder("Zone11")
     if not eggsFolder then return nil end
 
@@ -1244,7 +1237,9 @@ local function findTitanicEgg()
     return best
 end
 
+--========================================================
 -- ZONE ROTATION
+--========================================================
 
 local function getSelectedZoneList()
     local result = {}
@@ -1274,59 +1269,84 @@ local function advanceZone()
     if CurrentZoneIndex > #list then CurrentZoneIndex = 1 end
 end
 
--- GAUNTLETS
+--========================================================
+-- CURRENT EQUIPPED TOOL
+-- No Backpack equip / no forced key 1
+--========================================================
+
+local function getEquippedTool()
+    local character = getCharacter()
+    if not character then return nil end
+
+    for _,obj in ipairs(character:GetChildren()) do
+        if obj:IsA("Tool") then
+            return obj
+        end
+    end
+
+    return nil
+end
 
 local function isGauntletsEquipped()
-    local c = getCharacter()
-    return c and c:FindFirstChild("Gauntlets") ~= nil
+    return getEquippedTool() ~= nil
 end
 
 local function equipGauntlets()
-    if isGauntletsEquipped() then return true end
-
-    local backpack = Player:FindFirstChildOfClass("Backpack")
-    if not backpack or not backpack:FindFirstChild("Gauntlets") then
-        return false
-    end
-
-    pcall(function()
-        VIM:SendKeyEvent(true,Enum.KeyCode.One,false,game)
-        task.wait(0.05)
-        VIM:SendKeyEvent(false,Enum.KeyCode.One,false,game)
-    end)
-
-    local start = os.clock()
-    repeat
-        if isGauntletsEquipped() then return true end
-        task.wait(0.05)
-    until os.clock()-start > 2
-
+    -- Giữ nguyên vũ khí hiện đang cầm.
+    -- Không tự chọn Tool trong Backpack.
     return isGauntletsEquipped()
 end
 
-local function enableAutoSmash()
-    if Player:GetAttribute("AutoSmash") == true then return true end
+--========================================================
+-- AUTOSMASH - CHECK REAL UI STATE
+--========================================================
 
+local function getAutoSmashButton()
     local ui = PlayerGui:FindFirstChild("AutoSmashUI")
     local holder = ui and ui:FindFirstChild("Holder")
-    local btn = holder and holder:FindFirstChild("AutoSmashButton")
+    return holder and holder:FindFirstChild("AutoSmashButton")
+end
+
+local function isAutoSmashEnabled()
+    local btn = getAutoSmashButton()
     if not btn then return false end
 
+    local on = btn:FindFirstChild("On")
     local off = btn:FindFirstChild("Off")
-    if off and off.Visible then
-        pcall(function() firesignal(btn.Activated) end)
-    end
 
-    local start = os.clock()
-    repeat
-        if Player:GetAttribute("AutoSmash") == true then return true end
-        task.wait(0.05)
-    until os.clock()-start > 2
+    if on then return on.Visible end
+    if off then return not off.Visible end
 
     return Player:GetAttribute("AutoSmash") == true
 end
 
+local function enableAutoSmash()
+    local btn = getAutoSmashButton()
+    if not btn then return false end
+
+    if isAutoSmashEnabled() then return true end
+
+    local off = btn:FindFirstChild("Off")
+    if off and off.Visible then
+        if type(firesignal) == "function" then
+            pcall(function() firesignal(btn.Activated) end)
+        elseif type(fireclickdetector) == "function" then
+            pcall(function() fireclickdetector(btn) end)
+        end
+    end
+
+    local start = os.clock()
+    repeat
+        if isAutoSmashEnabled() then return true end
+        task.wait(0.1)
+    until os.clock()-start > 2
+
+    return isAutoSmashEnabled()
+end
+
+--========================================================
 -- SAFE EGG POSITION
+--========================================================
 
 local function getSafeEggCFrame(egg)
     if not egg or not egg.Parent then return nil end
@@ -1354,18 +1374,17 @@ local function getSafeEggCFrame(egg)
     return CFrame.new(targetPosition)*rotation
 end
 
+--========================================================
 -- BREAK EGG
--- Titanic vẫn dùng Auto Break, nhưng bỏ qua bộ lọc Rarity.
+--========================================================
 
-local function breakEgg(egg,isTitanic)
-    if BreakBusy or not egg or not egg.Parent then return end
+local function breakEggCore(egg,isTitanic)
+    if not egg or not egg.Parent then return end
     if hasCollectTarget() or hasShardTarget() then return end
-
     if not AutoBreak then return end
 
-    BreakBusy = true
-
     local initialHP = tonumber(egg:GetAttribute("HP")) or 0
+
     setStatus(
         isTitanic and "PRIORITY TITANIC - "..egg.Name
         or "Breaking "..egg.Name.." ["..tostring(initialHP).." HP]"
@@ -1399,10 +1418,17 @@ local function breakEgg(egg,isTitanic)
             break
         end
 
-        if not isGauntletsEquipped() then equipGauntlets() end
+        -- Không tự equip từ Backpack.
+        if not isGauntletsEquipped() then
+            setStatus("Waiting For Equipped Weapon")
+            task.wait(0.5)
+        end
+
         if hasCollectTarget() or hasShardTarget() then break end
 
-        if Player:GetAttribute("AutoSmash") ~= true then
+        -- Luôn kiểm tra UI On/Off, không chỉ dựa vào Attribute.
+        if not isAutoSmashEnabled() then
+            setStatus("Restoring Auto Smash")
             enableAutoSmash()
         end
 
@@ -1424,8 +1450,6 @@ local function breakEgg(egg,isTitanic)
         task.wait(0.08)
     end
 
-    BreakBusy = false
-
     if isTitanic then
         if not egg.Parent or (tonumber(egg:GetAttribute("HP")) or 0) <= 0 then
             setStatus("Titanic Destroyed - Resume Farm")
@@ -1442,6 +1466,28 @@ local function breakEgg(egg,isTitanic)
     elseif hasShardTarget() then
         setStatus("Shard Collect Priority")
     end
+end
+
+-- Wrapper: luôn trả BreakBusy về false kể cả khi có lỗi.
+local function breakEgg(egg,isTitanic)
+    if BreakBusy then return false end
+
+    BreakBusy = true
+
+    local success,err = xpcall(function()
+        breakEggCore(egg,isTitanic)
+    end,debug.traceback)
+
+    BreakBusy = false
+
+    if not success then
+        warn("[Alexandria] breakEgg error:\n"..tostring(err))
+        setStatus("Break Error - Recovering")
+        task.wait(0.5)
+        return false
+    end
+
+    return true
 end
 
 --========================================================
@@ -1602,7 +1648,7 @@ end)
 -- FOOTER
 
 label(Content,"Break To Steal A Chicken",UDim2.fromOffset(250,18),UDim2.new(0.5,-125,1,-25),11,Color3.fromRGB(145,145,150))
-label(Content,"Build: 1.2",UDim2.fromOffset(90,18),UDim2.new(1,-100,1,-25),10,Color3.fromRGB(125,125,130))
+label(Content,"Build: 1.3",UDim2.fromOffset(90,18),UDim2.new(1,-100,1,-25),10,Color3.fromRGB(125,125,130))
 
 -- APPLY LOADED TOGGLES
 
@@ -1617,155 +1663,178 @@ MoneyInput.Text = MoneyThresholdText
 updateMoneyHint()
 
 --========================================================
--- MAIN LOOP
+-- MAIN LOOP - AUTO RECOVERY
 --========================================================
 
 task.spawn(function()
     while Running and Gui.Parent do
 
-        -- PRIORITY 1: CHICKENS
-        if AutoCollect and not CollectBusy then
-            if findChicken() then CollectRequested = true end
-        end
+        -- Nếu bất kỳ lệnh nào trong Main Loop bị lỗi,
+        -- pcall sẽ bắt lỗi và khởi động lại vòng lặp.
+        local loopSuccess,loopError = pcall(function()
 
-        if AutoCollect and CollectRequested and not CollectBusy then
-            collectChicken()
-        end
+            while Running and Gui.Parent do
 
-        if AutoCollect and not CollectBusy then
-            if findChicken() then
-                CollectRequested = true
-                task.wait(0.05)
-                continue
-            else
-                CollectRequested = false
-            end
-        end
-
-        -- PRIORITY 2: SHARDS
-        if AutoCollectShard and not ShardBusy and not CollectBusy and not BreakBusy then
-            if findShard() then
-                collectShard()
-                task.wait(0.05)
-                continue
-            end
-        end
-
-        -- PRIORITY 3: TITANIC ZONE11
-        if PriorityTitanic and AutoBreak
-            and not CollectBusy and not ShardBusy and not BreakBusy
-            and not CollectRequested and not hasShardTarget() then
-
-            local titanic = findTitanicEgg()
-
-            if titanic then
-                setStatus("TITANIC FOUND - "..titanic.Name)
-                print("[Alexandria] TITANIC FOUND:",titanic:GetFullName())
-
-                if not isGauntletsEquipped() then
-                    setStatus("Titanic: Equipping Gauntlets")
-                    equipGauntlets()
+                -- PRIORITY 1: CHICKENS
+                if AutoCollect and not CollectBusy then
+                    if findChicken() then CollectRequested = true end
                 end
 
-                if isGauntletsEquipped() then
-                    if Player:GetAttribute("AutoSmash") ~= true then
-                        enableAutoSmash()
-                    end
+                if AutoCollect and CollectRequested and not CollectBusy then
+                    collectChicken()
+                end
 
-                    if Player:GetAttribute("AutoSmash") == true then
-                        breakEgg(titanic,true)
+                if AutoCollect and not CollectBusy then
+                    if findChicken() then
+                        CollectRequested = true
+                        task.wait(0.05)
+                        continue
+                    else
+                        CollectRequested = false
                     end
                 end
 
-                task.wait(0.05)
-                continue
-            else
-                local zone11Eggs = getZoneEggFolder("Zone11")
-
-                if not zone11Eggs or #zone11Eggs:GetChildren() == 0 then
-                    stageZone("Zone11")
-                    task.wait(0.1)
-                    continue
-                end
-            end
-        end
-
-        -- PRIORITY 4: EQUIP BEST WHEN IDLE
-        if AutoEquipBest and EquipBestPending then
-            processEquipBest()
-        end
-
-        -- PRIORITY 5: NORMAL AUTO BREAK
-        if AutoBreak and not CollectBusy and not BreakBusy
-            and not ShardBusy and not CollectRequested
-            and not hasShardTarget() then
-
-            if not isGauntletsEquipped() then
-                setStatus("Equipping Gauntlets")
-                equipGauntlets()
-            end
-
-            if hasCollectTarget() or hasShardTarget() then
-                task.wait(0.05)
-                continue
-            end
-
-            if isGauntletsEquipped() then
-                if Player:GetAttribute("AutoSmash") ~= true then
-                    enableAutoSmash()
+                -- PRIORITY 2: SHARDS
+                if AutoCollectShard and not ShardBusy and not CollectBusy and not BreakBusy then
+                    if findShard() then
+                        collectShard()
+                        task.wait(0.05)
+                        continue
+                    end
                 end
 
-                if Player:GetAttribute("AutoSmash") == true then
-                    local zoneName = getCurrentZone()
+                -- PRIORITY 3: TITANIC ZONE11
+                if PriorityTitanic and AutoBreak
+                    and not CollectBusy and not ShardBusy and not BreakBusy
+                    and not CollectRequested and not hasShardTarget() then
 
-                    if zoneName then
-                        local eggsFolder = getZoneEggFolder(zoneName)
+                    local titanic = findTitanicEgg()
 
-                        if not eggsFolder or #eggsFolder:GetChildren() == 0 then
-                            stageZone(zoneName)
+                    if titanic then
+                        setStatus("TITANIC FOUND - "..titanic.Name)
+                        print("[Alexandria] TITANIC FOUND:",titanic:GetFullName())
+
+                        if not isGauntletsEquipped() then
+                            setStatus("Waiting For Equipped Weapon")
                         end
 
-                        if hasCollectTarget() or hasShardTarget() then
-                            task.wait(0.05)
+                        if isGauntletsEquipped() then
+                            if not isAutoSmashEnabled() then
+                                enableAutoSmash()
+                            end
+
+                            if isAutoSmashEnabled() then
+                                breakEgg(titanic,true)
+                            end
+                        end
+
+                        task.wait(0.05)
+                        continue
+                    else
+                        local zone11Eggs = getZoneEggFolder("Zone11")
+
+                        if not zone11Eggs or #zone11Eggs:GetChildren() == 0 then
+                            stageZone("Zone11")
+                            task.wait(0.1)
                             continue
                         end
-
-                        -- KIỂM TRA TITANIC TRƯỚC TRỨNG THƯỜNG
-                        if PriorityTitanic then
-                            local urgent = findTitanicEgg()
-                            if urgent then
-                                breakEgg(urgent,true)
-                                task.wait(0.05)
-                                continue
-                            end
-                        end
-
-                        -- NORMAL EGG: HIGHEST HP FIRST
-                        local egg = findEgg(zoneName)
-
-                        if egg then
-                            local hp = tonumber(egg:GetAttribute("HP")) or 0
-                            setStatus("Highest HP: "..egg.Name.." ["..tostring(hp).." HP]")
-                            breakEgg(egg,false)
-                        else
-                            if not hasCollectTarget() and not hasShardTarget() then
-                                setStatus("Checking "..zoneName)
-                                advanceZone()
-                            end
-                            task.wait(0.12)
-                        end
-                    else
-                        setStatus("Select a Zone")
-                        task.wait(0.3)
                     end
                 end
+
+                -- PRIORITY 4: EQUIP BEST
+                if AutoEquipBest and EquipBestPending then
+                    processEquipBest()
+                end
+
+                -- PRIORITY 5: NORMAL AUTO BREAK
+                if AutoBreak and not CollectBusy and not BreakBusy
+                    and not ShardBusy and not CollectRequested
+                    and not hasShardTarget() then
+
+                    if not isGauntletsEquipped() then
+                        setStatus("Waiting For Equipped Weapon")
+                    end
+
+                    if hasCollectTarget() or hasShardTarget() then
+                        task.wait(0.05)
+                        continue
+                    end
+
+                    if isGauntletsEquipped() then
+                        if not isAutoSmashEnabled() then
+                            enableAutoSmash()
+                        end
+
+                        if isAutoSmashEnabled() then
+                            local zoneName = getCurrentZone()
+
+                            if zoneName then
+                                local eggsFolder = getZoneEggFolder(zoneName)
+
+                                if not eggsFolder or #eggsFolder:GetChildren() == 0 then
+                                    stageZone(zoneName)
+                                end
+
+                                if hasCollectTarget() or hasShardTarget() then
+                                    task.wait(0.05)
+                                    continue
+                                end
+
+                                -- CHECK TITANIC FIRST
+                                if PriorityTitanic then
+                                    local urgent = findTitanicEgg()
+                                    if urgent then
+                                        breakEgg(urgent,true)
+                                        task.wait(0.05)
+                                        continue
+                                    end
+                                end
+
+                                -- NORMAL EGG: HIGHEST HP FIRST
+                                local egg = findEgg(zoneName)
+
+                                if egg then
+                                    local hp = tonumber(egg:GetAttribute("HP")) or 0
+                                    setStatus("Highest HP: "..egg.Name.." ["..tostring(hp).." HP]")
+                                    breakEgg(egg,false)
+                                else
+                                    if not hasCollectTarget() and not hasShardTarget() then
+                                        setStatus("Checking "..zoneName)
+                                        advanceZone()
+                                    end
+                                    task.wait(0.12)
+                                end
+                            else
+                                setStatus("Select a Zone")
+                                task.wait(0.3)
+                            end
+                        end
+                    end
+
+                elseif AutoCollect and not CollectRequested then
+                    if not EquipBestPending then setStatus("Searching Pets") end
+                end
+
+                task.wait(0.05)
             end
+        end)
 
-        elseif AutoCollect and not CollectRequested then
-            if not EquipBestPending then setStatus("Searching Pets") end
+        if not loopSuccess then
+            warn("[Alexandria] MAIN LOOP ERROR - RECOVERING:")
+            warn(tostring(loopError))
+
+            -- Reset trạng thái Busy để không bị khóa farm.
+            BreakBusy = false
+            CollectBusy = false
+            ShardBusy = false
+            EquipBestBusy = false
+
+            -- Giữ AutoBreak và các cài đặt hiện tại.
+            if Running and Gui.Parent then
+                setStatus("Loop Error - Auto Recovering")
+                task.wait(1)
+            end
         end
-
-        task.wait(0.05)
     end
 end)
 
@@ -1774,17 +1843,19 @@ end)
 --========================================================
 
 print("====================================")
-print("[Alexandria Farm] BUILD 1.2 LOADED")
+print("[Alexandria Farm] BUILD 1.3 LOADED")
+print("[Alexandria Farm] Main Loop Auto Recovery: ON")
+print("[Alexandria Farm] BreakBusy Error Recovery: ON")
+print("[Alexandria Farm] AutoSmash UI State Check: ON")
+print("[Alexandria Farm] Current Equipped Tool Only: ON")
 print("[Alexandria Farm] Normal Egg Priority: HIGHEST HP")
 print("[Alexandria Farm] HP Tie Breaker: NEAREST")
 print("[Alexandria Farm] Money Filter: K/M/B/T/Qa/Qi")
-print("[Alexandria Farm] Scrollable Zone & Rarity Lists: ON")
 print("[Alexandria Farm] Chicken Priority: ON")
 print("[Alexandria Farm] Auto Equip Best:",AutoEquipBest)
 print("[Alexandria Farm] Auto Collect Shard:",AutoCollectShard)
 print("[Alexandria Farm] Priority Titanic:",PriorityTitanic)
 print("[Alexandria Farm] Titanic Scan: Zone11 ONLY")
-print("[Alexandria Farm] Titanic Detection: Name / Attributes")
 print("[Alexandria Farm] Config Version: 10")
 print("[Alexandria Farm] Config File:",ConfigFile)
 print("====================================")
